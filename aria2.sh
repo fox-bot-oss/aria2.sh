@@ -14,11 +14,12 @@
 
 sh_ver="2.7.4"
 export PATH=~/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/sbin:/bin
-aria2_conf_dir="/root/.aria2c"
-download_path="/root/downloads"
+aria2_conf_dir="/usr/local/etc/aria2"
+download_path="/var/www/downloads"
 aria2_conf="${aria2_conf_dir}/aria2.conf"
-aria2_log="${aria2_conf_dir}/aria2.log"
-aria2c="/usr/local/bin/aria2c"
+# aria2_log="${aria2_conf_dir}/aria2.log"
+aria2_log="/var/log/aria2.log"
+aria2c="/usr/bin/aria2c"
 Crontab_file="/usr/bin/crontab"
 Green_font_prefix="\033[32m"
 Red_font_prefix="\033[31m"
@@ -74,6 +75,7 @@ check_crontab_installed_status() {
 check_pid() {
     PID=$(ps -ef | grep "aria2c" | grep -v grep | grep -v "aria2.sh" | grep -v "init.d" | grep -v "service" | awk '{print $2}')
 }
+# 已弃用
 check_new_ver() {
     aria2_new_ver=$(
         {
@@ -87,6 +89,7 @@ check_new_ver() {
         [[ -z "${aria2_new_ver}" ]] && echo "取消..." && exit 1
     fi
 }
+# 已弃用
 check_ver_comparison() {
     read -e -p "是否更新(会中断当前下载任务) ? [Y/n] :" yn
     [[ -z "${yn}" ]] && yn="y"
@@ -98,6 +101,8 @@ check_ver_comparison() {
         Start_aria2
     fi
 }
+
+# 已弃用
 Download_aria2() {
     update_dl=$1
     if [[ $ARCH == i*86 || $dpkgARCH == i*86 ]]; then
@@ -161,11 +166,13 @@ LICENSE
     sed -i "s@/root/.aria2/@${aria2_conf_dir}/@" ${aria2_conf_dir}/*.conf
     sed -i "s@^\(rpc-secret=\).*@\1$(date +%s%N | md5sum | head -c 20)@" ${aria2_conf}
     sed -i "s@^#\(retry-on-.*=\).*@\1true@" ${aria2_conf}
-    sed -i "s@^\(max-connection-per-server=\).*@\132@" ${aria2_conf}
+#     sed -i "s@^\(max-connection-per-server=\).*@\132@" ${aria2_conf}
     touch aria2.session
     chmod +x *.sh
     echo -e "${Info} Aria2 完美配置下载完成！"
 }
+
+# 已弃用
 Service_aria2() {
     if [[ ${release} = "centos" ]]; then
         wget -N -t2 -T3 "https://raw.githubusercontent.com/P3TERX/aria2.sh/master/service/aria2_centos" -O /etc/init.d/aria2 ||
@@ -191,13 +198,18 @@ Service_aria2() {
     fi
     echo -e "${Info} Aria2服务 管理脚本下载完成 !"
 }
+
+systemd_aria2(){
+    echo -e "[Unit]\nDescription=Aria2 Service\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/aria2c --conf-path=/usr/local/etc/aria2/aria2.conf\n\n[Install]\nWantedBy=default.target" > /lib/systemd/system/aria2.service
+}
+
 Installation_dependency() {
     if [[ ${release} = "centos" ]]; then
         yum update
         yum install -y wget curl nano ca-certificates findutils jq tar gzip dpkg
     else
         apt-get update
-        apt-get install -y wget curl nano ca-certificates findutils jq tar gzip dpkg
+        apt-get install -y wget curl nano ca-certificates findutils jq tar gzip dpkg ufw
     fi
     if [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
         wget -qO- git.io/ca-certificates.sh | bash
@@ -210,20 +222,25 @@ Install_aria2() {
     echo -e "${Info} 开始安装/配置 依赖..."
     Installation_dependency
     echo -e "${Info} 开始下载/安装 主程序..."
-    check_new_ver
-    Download_aria2
+#     check_new_ver
+#     Download_aria2
+
+    apt update && apt install aria2 -y
+
     echo -e "${Info} 开始下载/安装 Aria2 完美配置..."
     Download_aria2_conf
     echo -e "${Info} 开始下载/安装 服务脚本(init)..."
-    Service_aria2
+#     Service_aria2
+    systemd_aria2
     Read_config
     aria2_RPC_port=${aria2_port}
-    echo -e "${Info} 开始设置 iptables 防火墙..."
-    Set_iptables
+    #echo -e "${Info} 开始设置 iptables 防火墙..."
+    #Set_iptables
     echo -e "${Info} 开始添加 iptables 防火墙规则..."
-    Add_iptables
-    echo -e "${Info} 开始保存 iptables 防火墙规则..."
-    Save_iptables
+    #Add_iptables
+    Add_UFW_rules
+    #echo -e "${Info} 开始保存 iptables 防火墙规则..."
+    #Save_iptables
     echo -e "${Info} 开始创建 下载目录..."
     mkdir -p ${download_path}
     echo -e "${Info} 所有步骤 安装完毕，开始启动..."
@@ -232,20 +249,26 @@ Install_aria2() {
 Start_aria2() {
     check_installed_status
     check_pid
-    [[ ! -z ${PID} ]] && echo -e "${Error} Aria2 正在运行，请检查 !" && exit 1
-    /etc/init.d/aria2 start
+    [[ -n ${PID} ]] && echo -e "${Error} Aria2 正在运行，请检查 !" && exit 1
+#     /etc/init.d/aria2 start
+    systemctl start aria2.service
+    check_pid
+    [[ -n ${PID} ]] && View_Aria2 || echo -e "${Error} Aria2 启动失败，请检查 !"
 }
 Stop_aria2() {
     check_installed_status
     check_pid
     [[ -z ${PID} ]] && echo -e "${Error} Aria2 没有运行，请检查 !" && exit 1
-    /etc/init.d/aria2 stop
+#     /etc/init.d/aria2 stop
+    systemctl stop aria2.service
 }
 Restart_aria2() {
     check_installed_status
+#     [[ ! -z ${PID} ]] && /etc/init.d/aria2 stop
+#     /etc/init.d/aria2 start
+    systemctl restart aria2.service
     check_pid
-    [[ ! -z ${PID} ]] && /etc/init.d/aria2 stop
-    /etc/init.d/aria2 start
+    [[ -n ${PID} ]] && View_Aria2 || echo -e "${Error} Aria2 启动失败，请检查 !"
 }
 Set_aria2() {
     check_installed_status
@@ -342,9 +365,11 @@ Set_aria2_RPC_port() {
             echo -e "\nrpc-listen-port=${aria2_RPC_port}" >>${aria2_conf}
             if [[ $? -eq 0 ]]; then
                 echo -e "${Info} RPC 端口修改成功！新端口为：${Green_font_prefix}${aria2_RPC_port}${Font_color_suffix}(配置文件中缺少相关选项参数，已自动加入配置文件底部)"
-                Del_iptables
-                Add_iptables
-                Save_iptables
+                #Del_iptables
+                Del_UFW_rules
+                #Add_iptables
+                Add_UFW_rules
+                #Save_iptables
                 if [[ ${read_123} != "1" ]]; then
                     Restart_aria2
                 fi
@@ -355,9 +380,11 @@ Set_aria2_RPC_port() {
             sed -i 's/^rpc-listen-port='${aria2_port}'/rpc-listen-port='${aria2_RPC_port}'/g' ${aria2_conf}
             if [[ $? -eq 0 ]]; then
                 echo -e "${Info} RPC 端口修改成功！新端口为：${Green_font_prefix}${aria2_RPC_port}${Font_color_suffix}"
-                Del_iptables
-                Add_iptables
-                Save_iptables
+                #Del_iptables
+                Del_UFW_rules
+                #Add_iptables
+                Add_UFW_rules
+                #Save_iptables
                 if [[ ${read_123} != "1" ]]; then
                     Restart_aria2
                 fi
@@ -443,9 +470,11 @@ Set_aria2_vim_conf() {
     if [[ ${aria2_port_old} != ${aria2_port} ]]; then
         aria2_RPC_port=${aria2_port}
         aria2_port=${aria2_port_old}
-        Del_iptables
-        Add_iptables
-        Save_iptables
+        #Del_iptables
+        Del_UFW_rules
+        #Add_iptables
+        Add_UFW_rules
+        #Save_iptables
     fi
     if [[ ${aria2_dir_old} != ${aria2_dir} ]]; then
         mkdir -p ${aria2_dir}
@@ -467,9 +496,11 @@ Reset_aria2_conf() {
     if [[ ${aria2_port_old} != ${aria2_port} ]]; then
         aria2_RPC_port=${aria2_port}
         aria2_port=${aria2_port_old}
-        Del_iptables
-        Add_iptables
-        Save_iptables
+        #Del_iptables
+        Del_UFW_rules
+        #Add_iptables
+        Add_UFW_rules
+        #Save_iptables
     fi
     Restart_aria2
 }
@@ -594,6 +625,7 @@ Update_bt_tracker() {
         bash <(wget -qO- git.io/tracker.sh) ${aria2_conf} RPC
     }
 }
+# 已弃用
 Update_aria2() {
     check_installed_status
     check_new_ver
@@ -611,20 +643,26 @@ Uninstall_aria2() {
         sed -i "/tracker.sh/d" "/tmp/crontab.bak"
         crontab "/tmp/crontab.bak"
         rm -f "/tmp/crontab.bak"
-        check_pid
-        [[ ! -z $PID ]] && kill -9 ${PID}
+#         check_pid
+#         [[ ! -z $PID ]] && kill -9 ${PID}
+        systemctl stop aria2.service
+        systemctl disable aria2.service
         Read_config "un"
-        Del_iptables
-        Save_iptables
-        rm -rf "${aria2c}"
+        #Del_iptables
+        Del_UFW_rules
+        #Save_iptables
+        
+#         rm -rf "${aria2c}"
+        apt remove aria2
         rm -rf "${aria2_conf_dir}"
-        if [[ ${release} = "centos" ]]; then
-            chkconfig --del aria2
-        else
-            update-rc.d -f aria2 remove
-        fi
-        rm -rf "/etc/init.d/aria2"
-        echo && echo "Aria2 卸载完成 !" && echo
+#         if [[ ${release} = "centos" ]]; then
+#             chkconfig --del aria2
+#         else
+#             update-rc.d -f aria2 remove
+#         fi
+#         rm -rf "/etc/init.d/aria2"
+#         echo && echo "Aria2 卸载完成 !" && echo
+
     else
         echo && echo "卸载已取消..." && echo
     fi
@@ -634,10 +672,20 @@ Add_iptables() {
     iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${aria2_bt_port} -j ACCEPT
     iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${aria2_dht_port} -j ACCEPT
 }
+Add_UFW_rules(){
+# 	ufw allow ${aria2_RPC_port}/tcp
+	ufw allow ${aria2_bt_port}/tcp
+	ufw allow ${aria2_dht_port}/udp
+}
 Del_iptables() {
     iptables -D INPUT -m state --state NEW -m tcp -p tcp --dport ${aria2_port} -j ACCEPT
     iptables -D INPUT -m state --state NEW -m tcp -p tcp --dport ${aria2_bt_port} -j ACCEPT
     iptables -D INPUT -m state --state NEW -m udp -p udp --dport ${aria2_dht_port} -j ACCEPT
+}
+Del_UFW_rules(){
+# 	ufw delete allow ${aria2_RPC_port}/tcp
+	ufw delete allow ${aria2_bt_port}/tcp
+	ufw delete allow ${aria2_dht_port}/udp
 }
 Save_iptables() {
     if [[ ${release} == "centos" ]]; then
@@ -661,8 +709,10 @@ Update_Shell() {
     [[ -z ${sh_new_ver} ]] && echo -e "${Error} 无法链接到 Github !" && exit 0
     if [[ -e "/etc/init.d/aria2" ]]; then
         rm -rf /etc/init.d/aria2
-        Service_aria2
-        Restart_aria2
+#         Service_aria2
+        systemd_aria2
+        #Restart_aria2
+        systemctl restart aria2.service
     fi
     if [[ -n $(crontab_update_status) ]]; then
         crontab_update_stop
@@ -673,7 +723,7 @@ Update_Shell() {
 
 echo && echo -e " Aria2 一键安装管理脚本 增强版 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix} by \033[1;35mP3TERX.COM\033[0m
  
- ${Green_font_prefix} 0.${Font_color_suffix} 升级脚本
+ ${Green_font_prefix} 0.${Font_color_suffix} 升级脚本 (已弃用)
  ———————————————————————
  ${Green_font_prefix} 1.${Font_color_suffix} 安装 Aria2
  ${Green_font_prefix} 2.${Font_color_suffix} 更新 Aria2
@@ -712,13 +762,15 @@ echo
 read -e -p " 请输入数字 [0-12]:" num
 case "$num" in
 0)
-    Update_Shell
+#     Update_Shell
+    echo "已弃用"
     ;;
 1)
     Install_aria2
     ;;
 2)
-    Update_aria2
+#     Update_aria2
+    apt upgrade aria2
     ;;
 3)
     Uninstall_aria2
@@ -731,6 +783,7 @@ case "$num" in
     ;;
 6)
     Restart_aria2
+#     systemctl restart aria2.service
     ;;
 7)
     Set_aria2
